@@ -6,6 +6,7 @@ import htsjdk.variant.variantcontext.Allele;
 import htsjdk.variant.variantcontext.Genotype;
 import htsjdk.variant.variantcontext.GenotypeBuilder;
 import htsjdk.variant.variantcontext.GenotypesContext;
+import htsjdk.variant.variantcontext.GenotypeLikelihoods;
 import htsjdk.variant.variantcontext.VariantContext;
 import htsjdk.variant.variantcontext.VariantContextBuilder;
 import htsjdk.variant.variantcontext.VariantContextUtils;
@@ -437,7 +438,9 @@ public final class SelectVariants extends VariantWalker {
     private Set<String> IDsToKeep = null;
     private Set<String> IDsToRemove = null;
 
-    private final List<Allele> diploidNoCallAlleles = Arrays.asList(Allele.NO_CALL, Allele.NO_CALL);
+    private final List<Allele> diploidNoCallAlleles = GATKVariantContextUtils.noCallAlleles(2);
+
+    private final Map<Integer, Integer> ploidyToNumberOfAlleles = new HashMap<Integer, Integer>();
 
     /**
      * Set up the VCF writer, the sample expressions and regexs, filters inputs, and the JEXL matcher
@@ -554,6 +557,16 @@ public final class SelectVariants extends VariantWalker {
                 return;
         }
 
+        // Initialize PL index to allele indices for all samples
+        for (final Genotype g : vc.getGenotypes()) {
+            if ( g.getPloidy() != 0 ) {
+                if ( !ploidyToNumberOfAlleles.containsKey(g.getPloidy()) || ploidyToNumberOfAlleles.get(g.getPloidy()) > vc.getNAlleles() ) {
+                    GenotypeLikelihoods.initializeAnyploidPLIndexToAlleleIndices(vc.getNAlleles() - 1, g.getPloidy());
+                    ploidyToNumberOfAlleles.put(g.getPloidy(), vc.getNAlleles());
+                }
+            }
+        }
+
         final VariantContext sub = subsetRecord(vc, preserveAlleles, removeUnusedAlternates);
         final VariantContext filteredGenotypeToNocall = setFilteredGenotypeToNocall(sub, setFilteredGenotypesToNocall);
 
@@ -604,11 +617,11 @@ public final class SelectVariants extends VariantWalker {
             compositeFilter = compositeFilter.and(new VariantTypesVariantFilter(selectedTypes));
         }
 
-        if (IDsToKeep != null && IDsToKeep.size() > 0) {
+        if (IDsToKeep != null && !IDsToKeep.isEmpty()) {
             compositeFilter = compositeFilter.and(new VariantIDsVariantFilter(IDsToKeep));
         }
 
-        if (IDsToRemove != null && IDsToRemove.size() > 0) {
+        if (IDsToRemove != null && !IDsToRemove.isEmpty()) {
             compositeFilter = compositeFilter.and(new VariantIDsVariantFilter(IDsToRemove).negate());
         }
 
@@ -1032,7 +1045,6 @@ public final class SelectVariants extends VariantWalker {
      * @param removeUnusedAlternates removes alternate alleles with AC=0
      * @return the subsetted VariantContext
      */
-
     private VariantContext subsetRecord(final VariantContext vc, final boolean preserveAlleles, final boolean removeUnusedAlternates) {
         //subContextFromSamples() always decodes the vc, which is a fairly expensive operation.  Avoid if possible
         if (noSamplesSpecified && !removeUnusedAlternates) {
@@ -1062,7 +1074,9 @@ public final class SelectVariants extends VariantWalker {
             for (final Genotype genotype : newGC) {
                 //Set genotype to no call if it falls in the fraction.
                 if (fractionGenotypes > 0 && randomGenotypes.nextDouble() < fractionGenotypes) {
-                    genotypes.add(new GenotypeBuilder(genotype).alleles(diploidNoCallAlleles).noGQ().make());
+                    final List<Allele> noCallAlleles = (genotype.getPloidy() == 2 ? diploidNoCallAlleles :
+                            GATKVariantContextUtils.noCallAlleles(genotype.getPloidy()));
+                    genotypes.add(new GenotypeBuilder(genotype).alleles(noCallAlleles).noGQ().make());
                 }
                 else {
                     genotypes.add(genotype);
@@ -1098,7 +1112,8 @@ public final class SelectVariants extends VariantWalker {
 
         for (final Genotype g : vc.getGenotypes()) {
             if (g.isCalled() && g.isFiltered()) {
-                genotypes.add(new GenotypeBuilder(g).alleles(diploidNoCallAlleles).make());
+                final List<Allele> noCallAlleles = (g.getPloidy() == 2 ? diploidNoCallAlleles : GATKVariantContextUtils.noCallAlleles(g.getPloidy()));
+                genotypes.add(new GenotypeBuilder(g).alleles(noCallAlleles).make());
             }
             else {
                 genotypes.add(g);

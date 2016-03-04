@@ -91,25 +91,16 @@ public final class GATKVariantContextUtils {
     }
 
     /**
-     * Diploid NO_CALL allele list...
-     *
-     * @deprecated you should use {@link #noCallAlleles(int)} instead. It indicates the presence of a hardcoded diploid assumption which is bad.
-     */
-    @Deprecated
-    public final static List<Allele> NO_CALL_ALLELES = Arrays.asList(Allele.NO_CALL, Allele.NO_CALL);
-
-
-    /**
-     * subset the Variant Context to the specific set of alleles passed in (pruning the PLs appropriately)
+     * Subset the Variant Context to a specific set of alleles (pruning the PLs appropriately)
      *
      * @param vc                 variant context with genotype likelihoods
      * @param allelesToUse       which alleles from the vc are okay to use; *** must be in the same relative order as those in the original VC ***
      * @param assignGenotypes    assignment strategy for the (subsetted) PLs
-     * @return a new non-null GenotypesContext
+     * @return a new non-null GenotypesContext with subsetted alleles
      */
-    public static GenotypesContext subsetDiploidAlleles(final VariantContext vc,
-                                                        final List<Allele> allelesToUse,
-                                                        final GenotypeAssignmentMethod assignGenotypes) {
+    public static GenotypesContext subsetAlleles(final VariantContext vc,
+                                                 final List<Allele> allelesToUse,
+                                                 final GenotypeAssignmentMethod assignGenotypes) {
         Utils.nonNull(allelesToUse, "allelesToUse is null");
         if ( allelesToUse.get(0).isNonReference() ) throw new IllegalArgumentException("First allele must be the reference allele");
         if ( allelesToUse.size() == 1 ) throw new IllegalArgumentException("Cannot subset to only 1 alt allele");
@@ -118,7 +109,7 @@ public final class GATKVariantContextUtils {
         if (vc.getGenotypes().isEmpty()) return GenotypesContext.create();
 
         // we need to determine which of the alternate alleles (and hence the likelihoods) to use and carry forward
-        final List<Integer> likelihoodIndexesToUse = determineLikelihoodIndexesToUse(vc, allelesToUse);
+        final List<List<Integer>>likelihoodIndexesToUse = determineLikelihoodIndexesToUse(vc, allelesToUse);
 
         // create the new genotypes
         return createGenotypesWithSubsettedLikelihoods(vc.getGenotypes(), vc, allelesToUse, likelihoodIndexesToUse, assignGenotypes);
@@ -130,20 +121,17 @@ public final class GATKVariantContextUtils {
      * @param originalGs               the original GenotypesContext
      * @param vc                       the original VariantContext
      * @param allelesToUse             the actual alleles to use with the new Genotypes
-     * @param likelihoodIndexesToUse   the indexes in the PL to use given the allelesToUse (@see #determineLikelihoodIndexesToUse())
+     * @param likelihoodIndexesToUse   the indexes in the PL to use given the allelesToUse for each genotype (@see #determineLikelihoodIndexesToUse())
      * @param assignGenotypes          assignment strategy for the (subsetted) PLs
      * @return a new non-null GenotypesContext
      */
     private static GenotypesContext createGenotypesWithSubsettedLikelihoods(final GenotypesContext originalGs,
                                                                             final VariantContext vc,
                                                                             final List<Allele> allelesToUse,
-                                                                            final List<Integer> likelihoodIndexesToUse,
+                                                                            final List<List<Integer>> likelihoodIndexesToUse,
                                                                             final GenotypeAssignmentMethod assignGenotypes) {
         // the new genotypes to create
         final GenotypesContext newGTs = GenotypesContext.create(originalGs.size());
-
-        // make sure we are seeing the expected number of likelihoods per sample
-        final int expectedNumLikelihoods = GenotypeLikelihoods.numLikelihoods(vc.getNAlleles(), 2);
 
         // the samples
         final List<String> sampleIndices = originalGs.getSampleNamesOrderedByName();
@@ -160,6 +148,8 @@ public final class GATKVariantContextUtils {
                 newLikelihoods = null;
                 gb.noPL();
             } else {
+                // make sure we are seeing the expected number of likelihoods per sample
+                final int expectedNumLikelihoods = GenotypeLikelihoods.numLikelihoods(vc.getNAlleles(), g.getPloidy());
                 final double[] originalLikelihoods = g.getLikelihoods().getAsVector();
                 if ( likelihoodIndexesToUse == null ) {
                     newLikelihoods = originalLikelihoods;
@@ -167,9 +157,9 @@ public final class GATKVariantContextUtils {
                     logger.debug("Wrong number of likelihoods in sample " + g.getSampleName() + " at " + vc + " got " + g.getLikelihoodsString() + " but expected " + expectedNumLikelihoods);
                     newLikelihoods = null;
                 } else {
-                    newLikelihoods = new double[likelihoodIndexesToUse.size()];
+                    newLikelihoods = new double[likelihoodIndexesToUse.get(k).size()];
                     int newIndex = 0;
-                    for ( final int oldIndex : likelihoodIndexesToUse )
+                    for ( final int oldIndex : likelihoodIndexesToUse.get(k) )
                         newLikelihoods[newIndex++] = originalLikelihoods[oldIndex];
 
                     // might need to re-normalize
@@ -182,7 +172,7 @@ public final class GATKVariantContextUtils {
                     gb.PL(newLikelihoods);
             }
 
-            updateGenotypeAfterSubsetting(g.getAlleles(), gb, assignGenotypes, newLikelihoods, allelesToUse);
+            updateGenotypeAfterSubsetting(g.getAlleles(), g.getPloidy(), gb, assignGenotypes, newLikelihoods, allelesToUse);
             newGTs.add(gb.make());
         }
 
@@ -439,7 +429,7 @@ public final class GATKVariantContextUtils {
             if (repetitionCount[0] == 0 || repetitionCount[1] == 0)
                 return null;
 
-            if (lengths.size() == 0) {
+            if (lengths.isEmpty()) {
                 lengths.add(repetitionCount[0]); // add ref allele length only once
             }
             lengths.add(repetitionCount[1]);  // add this alt allele's length
@@ -656,13 +646,10 @@ public final class GATKVariantContextUtils {
         // the new genotypes to create
         final GenotypesContext newGTs = GenotypesContext.create(oldGTs.size());
 
-        final Allele ref = vc.getReference();
-        final List<Allele> diploidRefAlleles = Arrays.asList(ref, ref);
-
         // create the new genotypes
         for ( final Genotype g : vc.getGenotypes() ) {
             final int gPloidy = g.getPloidy() == 0 ? ploidy : g.getPloidy();
-            final List<Allele> refAlleles = gPloidy == 2 ? diploidRefAlleles : Collections.nCopies(gPloidy, ref);
+            final List<Allele> refAlleles = Collections.nCopies(gPloidy, vc.getReference());
             final GenotypeBuilder gb = new GenotypeBuilder(g.getSampleName(), refAlleles);
             if ( g.hasDP() ) gb.DP(g.getDP());
             if ( g.hasGQ() ) gb.GQ(g.getGQ());
@@ -738,7 +725,7 @@ public final class GATKVariantContextUtils {
                                              final String setKey,
                                              final boolean filteredAreUncalled,
                                              final boolean mergeInfoWithMaxAC ) {
-        if ( unsortedVCs == null || unsortedVCs.size() == 0 )
+        if ( unsortedVCs == null || unsortedVCs.isEmpty() )
             return null;
 
         if (priorityListOfVCs != null && originalNumOfVCs != priorityListOfVCs.size())
@@ -753,7 +740,7 @@ public final class GATKVariantContextUtils {
                 .filter(vc -> !filteredAreUncalled || vc.isNotFiltered())
                 .collect(Collectors.toList());
 
-        if ( VCs.size() == 0 ) // everything is filtered out and we're filteredAreUncalled
+        if ( VCs.isEmpty() ) // everything is filtered out and we're filteredAreUncalled
             return null;
 
         // establish the baseline info from the first VC
@@ -964,10 +951,10 @@ public final class GATKVariantContextUtils {
      * @param allelesToUse     the new (sub)set of alleles to use
      * @return a new non-null GenotypesContext
      */
-    static private GenotypesContext fixGenotypesFromSubsettedAlleles(final GenotypesContext originalGs, final VariantContext originalVC, final List<Allele> allelesToUse) {
+    private static GenotypesContext fixGenotypesFromSubsettedAlleles(final GenotypesContext originalGs, final VariantContext originalVC, final List<Allele> allelesToUse) {
 
         // we need to determine which of the alternate alleles (and hence the likelihoods) to use and carry forward
-        final List<Integer> likelihoodIndexesToUse = determineLikelihoodIndexesToUse(originalVC, allelesToUse);
+        final List<List<Integer>> likelihoodIndexesToUse = determineLikelihoodIndexesToUse(originalVC, allelesToUse);
 
         // create the new genotypes
         return createGenotypesWithSubsettedLikelihoods(originalGs, originalVC, allelesToUse, likelihoodIndexesToUse, GenotypeAssignmentMethod.DO_NOT_ASSIGN_GENOTYPES);
@@ -979,7 +966,7 @@ public final class GATKVariantContextUtils {
      * @param allelesToUse      the subset of alleles to use
      * @return a list of PL indexes to use or null if none
      */
-    private static List<Integer> determineLikelihoodIndexesToUse(final VariantContext originalVC, final List<Allele> allelesToUse) {
+    private static List<List<Integer>> determineLikelihoodIndexesToUse(final VariantContext originalVC, final List<Allele> allelesToUse) {
 
         // the bitset representing the allele indexes we want to keep
         final boolean[] alleleIndexesToUse = getAlleleIndexBitset(originalVC, allelesToUse);
@@ -994,28 +981,46 @@ public final class GATKVariantContextUtils {
     }
 
     /**
-     * Get the actual likelihoods indexes to use given the corresponding allele indexes
+     * For each genotype, get the likelihood indexes to use for the corresponding allele indexes
      *
      * @param originalVC           the original VariantContext
      * @param alleleIndexesToUse   the bitset representing the alleles to use (@see #getAlleleIndexBitset)
-     * @return a non-null List
+     * @return likelihoods indexes for each genotype
      */
-    private static List<Integer> getLikelihoodIndexes(final VariantContext originalVC, final boolean[] alleleIndexesToUse) {
+    private static List<List<Integer>> getLikelihoodIndexes(final VariantContext originalVC, final boolean[] alleleIndexesToUse) {
 
-        final List<Integer> result = new ArrayList<>(30);
+        final List<List<Integer>> likelihoodIndexesPerGenotype = new ArrayList<List<Integer>>(10);
 
-        // numLikelihoods takes total # of alleles. Use default # of chromosomes (ploidy) = 2
-        final int numLikelihoods = GenotypeLikelihoods.numLikelihoods(originalVC.getNAlleles(), DEFAULT_PLOIDY);
+        for (final Genotype g : originalVC.getGenotypes()) {
+            final int numLikelihoods = GenotypeLikelihoods.numLikelihoods(originalVC.getNAlleles(), g.getPloidy());
+            final List<Integer> likelihoodIndexes = new ArrayList<Integer>(30);
+            for ( int PLindex = 0; PLindex < numLikelihoods; PLindex++ ) {
+                // consider this entry only if all the alleles are good
+                if ( areAllAllelesUsed(PLindex, alleleIndexesToUse, g.getPloidy()) )
+                    likelihoodIndexes.add(PLindex);
+            }
+            likelihoodIndexesPerGenotype.add(likelihoodIndexes);
+        }
 
-        for ( int PLindex = 0; PLindex < numLikelihoods; PLindex++ ) {
-            final GenotypeLikelihoods.GenotypeLikelihoodsAllelePair alleles = GenotypeLikelihoods.getAllelePair(PLindex);
-            // consider this entry only if both of the alleles are good
-            if ( alleleIndexesToUse[alleles.alleleIndex1] && alleleIndexesToUse[alleles.alleleIndex2] ) {
-                result.add(PLindex);
+        return likelihoodIndexesPerGenotype;
+    }
+
+    /**
+     * For a PL index, check if all of the alleles are used
+     *
+     * @param PLindex               index into the number of likelihoods (@see #numLikelihoods)
+     * @param alleleIndexesToUse    the bitset representing the alleles to use (@see #getAlleleIndexBitset)
+     * @param ploidy                the number of chromosomes
+     * @return true if all of the alleles are used, false otherwise
+     */
+    private static boolean areAllAllelesUsed(final int PLindex, final boolean[] alleleIndexesToUse, final int ploidy) {
+        for ( final Integer alleleIndex : GenotypeLikelihoods.getAlleles(PLindex, ploidy) ){
+            if ( !alleleIndexesToUse[alleleIndex] ) {
+                return false;
             }
         }
 
-        return result;
+        return true;
     }
 
     /**
@@ -1081,39 +1086,51 @@ public final class GATKVariantContextUtils {
      * Add the genotype call (GT) field to GenotypeBuilder using the requested algorithm assignmentMethod
      *
      * @param originalGT the original genotype calls, cannot be null
+     * @param ploidy the number of sets of chromosomes
      * @param gb the builder where we should put our newly called alleles, cannot be null
      * @param assignmentMethod the method to use to do the assignment, cannot be null
      * @param newLikelihoods a vector of likelihoods to use if the method requires PLs, should be log10 likelihoods, cannot be null
      * @param allelesToUse the alleles we are using for our subsetting
      */
-    public static void updateGenotypeAfterSubsetting(final List<Allele> originalGT,
-                                                     final GenotypeBuilder gb,
-                                                     final GenotypeAssignmentMethod assignmentMethod,
-                                                     final double[] newLikelihoods,
-                                                     final List<Allele> allelesToUse) {
+    protected static void updateGenotypeAfterSubsetting(final List<Allele> originalGT,
+                                                        final int ploidy,
+                                                        final GenotypeBuilder gb,
+                                                        final GenotypeAssignmentMethod assignmentMethod,
+                                                        final double[] newLikelihoods,
+                                                        final List<Allele> allelesToUse) {
+        if ( originalGT == null )
+            throw new IllegalArgumentException("Orginal genotype cannot be null");
+        if ( gb == null )
+            throw new IllegalArgumentException("GenotypeBuilder cannot be null");
+        if ( allelesToUse == null || allelesToUse.isEmpty() )
+            throw new IllegalArgumentException("Alleles to use cannot be empty or null");
+
         switch ( assignmentMethod ) {
             case DO_NOT_ASSIGN_GENOTYPES:
                 break;
             case SET_TO_NO_CALL:
-                gb.alleles(noCallAlleles(2)); // @TODO assumes diploid
+                gb.alleles(noCallAlleles(ploidy));
                 gb.noGQ();
                 break;
             case USE_PLS_TO_ASSIGN:
                 if ( newLikelihoods == null || likelihoodsAreUninformative(newLikelihoods) ) {
                     // if there is no mass on the (new) likelihoods, then just no-call the sample
-                    gb.alleles(noCallAlleles(2)); // @TODO assumes diploid
+                    gb.alleles(noCallAlleles(ploidy));
                     gb.noGQ();
                 } else {
                     // find the genotype with maximum likelihoods
                     final int PLindex = MathUtils.maxElementIndex(newLikelihoods);
-                    GenotypeLikelihoods.GenotypeLikelihoodsAllelePair alleles = GenotypeLikelihoods.getAllelePair(PLindex);
-                    gb.alleles(Arrays.asList(allelesToUse.get(alleles.alleleIndex1), allelesToUse.get(alleles.alleleIndex2)));
+                    final List<Allele> alleles = new ArrayList<>();
+                    for ( final Integer alleleIndex : GenotypeLikelihoods.getAlleles(PLindex, ploidy)) {
+                        alleles.add(allelesToUse.get(alleleIndex) );
+                    }
+                    gb.alleles(alleles);
                     gb.log10PError(GenotypeLikelihoods.getGQLog10FromLikelihoods(PLindex, newLikelihoods));
                 }
                 break;
             case BEST_MATCH_TO_ORIGINAL:
                 final List<Allele> best = new LinkedList<>();
-                final Allele ref = allelesToUse.get(0); // WARNING -- should be checked in input argument
+                final Allele ref = allelesToUse.get(0);
                 for ( final Allele originalAllele : originalGT ) {
                     best.add(allelesToUse.contains(originalAllele) ? originalAllele : ref);
                 }
@@ -1141,7 +1158,7 @@ public final class GATKVariantContextUtils {
         final int numOriginalAltAlleles = originalVC.getNAlleles() - 1;
         final boolean[] alleleIndexesToKeep = new boolean[numOriginalAltAlleles + 1];
 
-        // the reference Allele is definitely still used
+        // the reference allele is always used
         alleleIndexesToKeep[0] = true;
         for ( int i = 0; i < numOriginalAltAlleles; i++ ) {
             if ( allelesToKeep.contains(originalVC.getAlternateAllele(i)) )
