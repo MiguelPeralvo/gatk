@@ -26,14 +26,19 @@ public final class IndexUtils {
         }
         logger.debug("Loading Tribble index from disk for file " + featureFile);
         final Index index = IndexFactory.loadIndex(indexFile.getAbsolutePath());
+        checkIndexModificationTime(featureFile, indexFile, index);
+        return index;
+    }
 
-        // check if the file is up-to date (filestamp and version check)
-        if (index.isCurrentVersion() && indexFile.lastModified() >= featureFile.lastModified()) {
-            return index;
+    /**
+     * @throws UserException the index not up-to date (ie older than the feature file) and is not the current version.
+     */
+    public static void checkIndexModificationTime(final File featureFile, final File indexFile, final Index index) {
+        if (! index.isCurrentVersion()) {
+            // we've loaded an old version of the index, we want to remove it <-- currently not used, but may re-enable
+            throw new UserException("Index file " + indexFile + " is out of date (old version). Use IndexFeatureFile to make an index.");
         } else if (indexFile.lastModified() < featureFile.lastModified()) {
             throw new UserException("Index file " + indexFile + " is out of date (index older than input file). Use IndexFeatureFile to make an index.");
-        } else { // we've loaded an old version of the index, we want to remove it <-- currently not used, but may re-enable
-            throw new UserException("Index file " + indexFile + " is out of date (old version). Use IndexFeatureFile to make an index.");
         }
     }
 }

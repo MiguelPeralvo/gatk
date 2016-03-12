@@ -403,14 +403,14 @@ public final class FeatureDataSource<T extends Feature> implements GATKDataSourc
         if (header instanceof VCFHeader) {
             dict = ((VCFHeader) header).getSequenceDictionary();
         }
-        return dict == null || dict.isEmpty() ? createSequenceDictionaryFromContigList() : dict;
+        return dict == null || dict.isEmpty() ? createSequenceDictionaryFromFeatureIndex() : dict;
     }
 
     /**
      * get the sequence dictionary contig list that is always in the index
      * @return a SAMSequenceDictionary or null if the index cannot be loaded or there are no contigs in the index
      */
-    private SAMSequenceDictionary createSequenceDictionaryFromContigList() {
+    private SAMSequenceDictionary createSequenceDictionaryFromFeatureIndex() {
         final Index index = hasIndex ? IndexUtils.loadTribbleIndex(featureFile) : null;
         if (index == null){
             return null;
