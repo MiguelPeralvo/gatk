@@ -149,6 +149,8 @@ dependencies {
         exclude module: 'kryo' // use Spark's version
     }
 
+    compile files("${System.properties['user.home']}/jbwa/jbwa.jar")
+
     //needed for DataflowAssert
     testCompile 'org.hamcrest:hamcrest-all:1.3'
     testCompile 'junit:junit:4.12'
@@ -233,6 +235,7 @@ test {
     systemProperty "samjdk.use_async_io_tribble", "false"
     systemProperty "samjdk.intel_deflater_so_path", "build/libIntelDeflater.so"
     systemProperty "samjdk.compression_level", "1"
+    systemProperty "java.library.path", "${System.properties['user.home']}/jbwa/src/main/native"
     systemProperty "gatk.spark.debug", System.getProperty("gatk.spark.debug")
 
     // set heap size for the test JVM(s)

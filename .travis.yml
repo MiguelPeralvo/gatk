@@ -16,6 +16,9 @@ env:
   - GCLOUD=$HOME/gcloud/google-cloud-sdk/bin 
   - CLOUDSDK_PYTHON_SITEPACKAGES=1 
   - GOOGLE_APPLICATION_CREDENTIALS=$TRAVIS_BUILD_DIR/servicekey.json
+  #BWA
+  - JBWA_DIR=$HOME/jbwa
+  - JBWA_REPO=https://github.com/lindenb/jbwa
   #hellbender specific variables
   - HELLBENDER_TEST_INPUTS=gs://hellbender/test/resources/
   - HELLBENDER_TEST_STAGING=gs://hellbender/test/staging/
@@ -54,6 +57,10 @@ before_install:
 - sudo apt-get install -y --force-yes  gcc
 - gcc --version
 #install git-lfs
+#install BWA
+- sudo mkdir $JBWA_DIR
+- sudo git clone $JBWA_REPO $JBWA_DIR
+- (cd $JBWA_DIR && sudo make)
 install:
 - if [[ $TRAVIS_SECURE_ENV_VARS == false && $CLOUD == mandatory ]]; then
     echo "Can't run cloud tests without keys so don't bother building";
