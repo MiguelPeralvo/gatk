@@ -1,35 +1,155 @@
-package org.broadinstitute.hellbender.tools.spark.sv;
+package org.broadinstitute.hellbender.tools.spark.pipelines.metrics;
 
 import com.google.common.annotations.VisibleForTesting;
-import htsjdk.samtools.SamPairUtil;
 import htsjdk.samtools.SAMFileHeader;
+import htsjdk.samtools.SamPairUtil;
 import htsjdk.samtools.metrics.MetricsFile;
 import htsjdk.samtools.util.Histogram;
-import org.apache.spark.api.java.JavaPairRDD;
-import org.broadinstitute.hellbender.utils.read.GATKRead;
-import org.broadinstitute.hellbender.metrics.MetricAccumulationLevel;
-import org.broadinstitute.hellbender.tools.picard.analysis.InsertSizeMetrics;
-
+import htsjdk.samtools.util.IOUtil;
 import org.apache.spark.api.java.JavaRDD;
-
+import org.broadinstitute.hellbender.engine.AuthHolder;
+import org.broadinstitute.hellbender.engine.filters.ReadFilter;
+import org.broadinstitute.hellbender.engine.filters.ReadFilterLibrary;
+import org.broadinstitute.hellbender.engine.filters.WellformedReadFilter;
+import org.broadinstitute.hellbender.exceptions.GATKException;
+import org.broadinstitute.hellbender.metrics.MetricAccumulationLevel;
+import org.broadinstitute.hellbender.metrics.MetricsUtils;
+import org.broadinstitute.hellbender.tools.picard.analysis.InsertSizeMetrics;
+import org.broadinstitute.hellbender.utils.R.RScriptExecutor;
+import org.broadinstitute.hellbender.utils.R.RScriptExecutorException;
+import org.broadinstitute.hellbender.utils.io.Resource;
+import org.broadinstitute.hellbender.utils.read.GATKRead;
 import scala.Tuple2;
 
+import java.io.File;
+import java.io.Serializable;
 import java.util.*;
 import java.util.function.Function;
-import java.util.stream.StreamSupport;
 import java.util.stream.Collectors;
-import java.io.Serializable;
+import java.util.stream.StreamSupport;
 
 // TODO: is it desired that mapping quality is collected as well?
 // TODO: consider refactoring code for other metric collection usages
 /**
  * Worker class to collect insert size metrics, add metrics to file, and provides accessors to stats of groups of different level.
  */
-public final class InsertSizeMetricsCollectorSpark implements Serializable {
+public final class TInsertSizeMetricsCollectorSpark
+        implements SamMetricsCollectorSpark<TInsertSizeMetricsCollectorSparkArgs>, Serializable {
     private static final long serialVersionUID = 1L;
 
+    MetricsFile<InsertSizeMetrics, Integer> metricsFile = new MetricsFile<InsertSizeMetrics, Integer>();
+
+    private TInsertSizeMetricsCollectorSparkArgs args = null;
+
+    // path to Picard R script for producing histograms in PDF files.
+    private static final String R_SCRIPT = "insertSizeHistogram.R";
+
     /**
-     * Constructor; also acts as driver for organizing workflow.
+     * Initialize the collector with input arguments;
+     */
+    public void initializeCollector(TInsertSizeMetricsCollectorSparkArgs inputArgs) {
+        this.args = inputArgs;
+    }
+
+    @Override
+    public void collectMetrics(
+            SAMFileHeader samHeader,
+            TInsertSizeMetricsCollectorSparkArgs args,
+            AuthHolder authHolder,
+            String inputName,
+            JavaRDD<GATKRead> filteredReads) {
+
+        if(filteredReads.isEmpty()) {throw new GATKException("No valid reads found in input file."); }
+
+        this.args = args;
+
+        //final MetricsFile<InsertSizeMetrics, Integer> metricsFile = getMetricsFile();
+
+        //final InsertSizeMetricsCollectorSpark collector = new InsertSizeMetricsCollectorSpark(
+        doCollect(
+                filteredReads,
+                samHeader,
+                args.metricAccumulationLevel,
+                args.maxMADTolerance,
+                metricsFile);
+
+        MetricsUtils.saveMetrics(metricsFile, args.output.getAbsolutePath(), authHolder);
+        writeHistogramPDF(inputName);
+    }
+
+    public ReadFilter getCollectorReadFilter(SAMFileHeader samFileHeader) {
+
+        final SVCustomReadFilter svFilter = new SVCustomReadFilter(
+                args.useEnd,
+                args.filterNonProperlyPairedReads,
+                !args.useDuplicateReads,
+                !args.useSecondaryAlignments,
+                !args.useSupplementaryAlignments,
+                args.MQPassingThreshold);
+
+        return new WellformedReadFilter(samFileHeader).and(svFilter);
+
+    }
+
+    /**
+     * Customized serializable reads filter, based on cmd line arguments provided
+     */
+    private static final class SVCustomReadFilter implements ReadFilter{
+        private static final long serialVersionUID = 1L;
+
+        private final ReadFilter combinedReadFilter;
+
+        public SVCustomReadFilter(final TInsertSizeMetricsCollectorSparkArgs.EndToUse whichEnd,
+                                  final boolean filterNonProperlyPairedReads,
+                                  final boolean filterDuplicatedReads,
+                                  final boolean filterSecondaryAlignments,
+                                  final boolean filterSupplementaryAlignments,
+                                  final int     MQThreshold){
+
+            final TInsertSizeMetricsCollectorSparkArgs.EndToUse endVal = whichEnd;
+
+            ReadFilter tempFilter = ReadFilterLibrary.MAPPED;
+            tempFilter = tempFilter.and(GATKRead::isPaired);
+            tempFilter = tempFilter.and(read -> 0!=read.getFragmentLength());
+            tempFilter = tempFilter.and(read -> endVal == (read.isFirstOfPair() ?
+                    TInsertSizeMetricsCollectorSparkArgs.EndToUse.FIRST :
+                    TInsertSizeMetricsCollectorSparkArgs.EndToUse.SECOND));
+
+            if(filterNonProperlyPairedReads)  { tempFilter = tempFilter.and(GATKRead::isProperlyPaired); }
+            if(filterDuplicatedReads)         { tempFilter = tempFilter.and(read -> !read.isDuplicate()); }
+            if(filterSecondaryAlignments)     { tempFilter = tempFilter.and(read -> !read.isSecondaryAlignment()); }
+            if(filterSupplementaryAlignments) { tempFilter = tempFilter.and(read -> !read.isSupplementaryAlignment()); }
+
+            if(0!=MQThreshold)  { tempFilter = tempFilter.and(read -> read.getMappingQuality() >= MQThreshold);}
+
+            combinedReadFilter = tempFilter;
+        }
+
+        @Override
+        public boolean test(final GATKRead read){
+            return combinedReadFilter.test(read);
+        }
+    }
+
+    /**
+     * Calls R script to plot histogram(s) in PDF.
+     * @throws RScriptExecutorException
+     */
+    @VisibleForTesting
+    void writeHistogramPDF(String inputName) throws RScriptExecutorException {
+
+        final File histogramPlotPDF = new File(args.histogramPlotFile);
+        IOUtil.assertFileIsWritable(histogramPlotPDF);
+
+        final RScriptExecutor executor = new RScriptExecutor();
+        executor.addScript(new Resource(R_SCRIPT, org.broadinstitute.hellbender.tools.spark.sv.CollectInsertSizeMetricsSpark.class));
+        executor.addArgs(args.output,                                // text-based metrics file
+                histogramPlotPDF.getAbsolutePath(),    // PDF graphics file
+                inputName);                  // input bam file
+        executor.exec();
+    }
+    /**
+     * doCollect; also acts as driver for organizing workflow.
      *
      * @param filteredReads         reads that pass filters
      * @param header                header in the input
@@ -37,7 +157,7 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
      * @param histogramMADTolerance MAD tolerance when producing histogram plot
      * @param metricsFile           metrics file to write InsertSizeMetrics to
      */
-    public InsertSizeMetricsCollectorSpark(final JavaRDD<GATKRead> filteredReads,
+    public void doCollect(final JavaRDD<GATKRead> filteredReads,
                                            final SAMFileHeader header,
                                            final Set<MetricAccumulationLevel> accumLevels,
                                            final double histogramMADTolerance,
@@ -56,10 +176,10 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
 //        Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>> histogramsOfReadGroups = rdd5.collectAsMap();
 
         final Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>> histogramsOfReadGroups = filteredReads.mapToPair(read -> traverseReadsToExtractInfo(read, header))
-                                                                                                                                   .groupByKey()
-                                                                                                                                   .mapToPair(InsertSizeMetricsCollectorSpark::gatherSizesByOrientation)
-                                                                                                                                   .mapToPair(InsertSizeMetricsCollectorSpark::constructHistogramFromList)
-                                                                                                                                   .collectAsMap();
+                .groupByKey()
+                .mapToPair(TInsertSizeMetricsCollectorSpark::gatherSizesByOrientation)
+                .mapToPair(TInsertSizeMetricsCollectorSpark::constructHistogramFromList)
+                .collectAsMap();
 
         // accumulate for higher levels, if so desired
         // returns a list, of the same size as the number of distinct levels requested,
@@ -85,7 +205,7 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
                                                                                                                          final Set<MetricAccumulationLevel> accumLevels){
 
         final List<Tuple2<ReadGroupParentExtractor,
-                          Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>>>> extractors = new ArrayList<>();
+                Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>>>> extractors = new ArrayList<>();
 
         if(accumLevels.contains(MetricAccumulationLevel.LIBRARY))   { extractors.add( new Tuple2<>(new ReadGroupLibraryExtractor(),  new HashMap<>())); }
         if(accumLevels.contains(MetricAccumulationLevel.SAMPLE))    { extractors.add( new Tuple2<>(new ReadGroupSampleExtractor(),   new HashMap<>())); }
@@ -94,7 +214,7 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
         for(final GroupMetaInfo groupMetaInfo : histogramsAtRGLevel.keySet()){
             final Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>> readGroupHistograms = histogramsAtRGLevel.get(groupMetaInfo);
             for(final Tuple2<ReadGroupParentExtractor,
-                             Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>>> extractor : extractors){
+                    Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>>> extractor : extractors){
                 distributeRGHistogramsToAppropriateLevel(groupMetaInfo, readGroupHistograms, extractor);
             }
         }
@@ -104,7 +224,7 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
         if(accumLevels.contains(MetricAccumulationLevel.READ_GROUP)){ listOfHistograms.add(histogramsAtRGLevel); }
 
         for(final Tuple2<ReadGroupParentExtractor,
-                         Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>>> extractor : extractors){
+                Map<GroupMetaInfo, Map<SamPairUtil.PairOrientation, SortedMap<Integer, Long>>>> extractor : extractors){
             listOfHistograms.add(extractor._2());
         }
         return listOfHistograms;
@@ -300,8 +420,8 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
     // Maps an iterable of pairs of (orientation, length) to a map where length values are grouped by orientations
     private static Tuple2<GroupMetaInfo, Map<SamPairUtil.PairOrientation, List<Integer>>> gatherSizesByOrientation(final Tuple2<GroupMetaInfo, Iterable<Tuple2<SamPairUtil.PairOrientation, Integer>>> entry){
         return new Tuple2<>(entry._1(), StreamSupport.stream(entry._2().spliterator(), false)
-                                                     .collect(Collectors.groupingBy(Tuple2::_1,
-                                                                                    Collectors.mapping(Tuple2::_2, Collectors.toList()))));
+                .collect(Collectors.groupingBy(Tuple2::_1,
+                        Collectors.mapping(Tuple2::_2, Collectors.toList()))));
     }
 
     // Maps a list of fragment size length values to a histogram, implemented as SortedMap
@@ -311,7 +431,7 @@ public final class InsertSizeMetricsCollectorSpark implements Serializable {
 
         for(final Map.Entry<SamPairUtil.PairOrientation, List<Integer>> e : entry._2().entrySet()){
             orientationToSortedMap.put(e.getKey(),
-                                       new TreeMap<>( e.getValue().stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting())) ));
+                    new TreeMap<>( e.getValue().stream().collect(Collectors.groupingBy(Function.identity(), Collectors.counting())) ));
         }
         return new Tuple2<>(entry._1(), orientationToSortedMap);
     }
