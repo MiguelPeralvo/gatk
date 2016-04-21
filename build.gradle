@@ -354,6 +354,10 @@ signing {
     sign configurations.archives
 }
 
+
+def boolean hasRequiredAuthenticationForUpload(){
+    if project.p
+}
 /**
  * Upload a release to sonatype.  You must be an authorized uploader and have your sonatype
  * username and password information in your gradle properties file.  See the readme for more info.
@@ -370,7 +374,7 @@ uploadArchives {
                     authentication(userName: sonatypeUsername, password: sonatypePassword)
                 }
 
-                snapshotRepository(url: "http://artifactory.broad.com/artifactory/libs-snapshots-local/") {
+                snapshotRepository(url: "https://artifactory.broadinstitute.org/artifactory/libs-snapshot-local/") {
                     authentication(userName: System.env.ARTIFACTORY_USERNAME, password: System.env.ARTIFACTORY_PASSWORD)
                 }
 
