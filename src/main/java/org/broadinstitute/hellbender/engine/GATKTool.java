@@ -311,7 +311,7 @@ public abstract class GATKTool extends CommandLineProgram {
     private void validateSequenceDictionaries() {
         final SAMSequenceDictionary refDict = hasReference() ? reference.getSequenceDictionary() : null;
         final SAMSequenceDictionary readDict = hasReads() ? reads.getSequenceDictionary() : null;
-        final List<SAMSequenceDictionary> variantDicts = hasFeatures() ? features.getAllSequenceDictionaries() : Collections.emptyList();
+        final List<SAMSequenceDictionary> featureDicts = hasFeatures() ? features.getAllSequenceDictionaries() : Collections.emptyList();
 
         // Check the reference dictionary against the reads dictionary
         if ( hasReference() && hasReads() ) {
@@ -327,12 +327,12 @@ public abstract class GATKTool extends CommandLineProgram {
 
         // Check all variants dictionaries against the reference and/or reads dictionaries
         // TODO: pass file names associated with each sequence dictionary into validateDictionaries(); issue #660
-        for ( final SAMSequenceDictionary variantsDict : variantDicts ) {
+        for ( final SAMSequenceDictionary featureDict : featureDicts ) {
             if (hasReference()){
-                SequenceDictionaryUtils.validateDictionaries("reference", refDict, "variants", variantsDict);
+                SequenceDictionaryUtils.validateDictionaries("reference", refDict, "features", featureDict);
             }
             if (hasReads()) {
-                SequenceDictionaryUtils.validateDictionaries("reads", readDict, "variants", variantsDict);
+                SequenceDictionaryUtils.validateDictionaries("reads", readDict, "features", featureDict);
             }
         }
 

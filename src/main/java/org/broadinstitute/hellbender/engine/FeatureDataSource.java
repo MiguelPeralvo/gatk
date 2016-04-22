@@ -1,16 +1,14 @@
 package org.broadinstitute.hellbender.engine;
 
 import htsjdk.samtools.SAMSequenceDictionary;
-import htsjdk.samtools.SAMSequenceRecord;
 import htsjdk.tribble.*;
-import htsjdk.tribble.index.Index;
 import htsjdk.variant.vcf.VCFHeader;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.IndexFeatureFile;
-import org.broadinstitute.hellbender.utils.IndexUtils;
+import org.broadinstitute.hellbender.utils.SequenceDictionaryUtils;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
 
 import java.io.File;
@@ -403,26 +401,13 @@ public final class FeatureDataSource<T extends Feature> implements GATKDataSourc
         if (header instanceof VCFHeader) {
             dict = ((VCFHeader) header).getSequenceDictionary();
         }
-        return dict == null || dict.isEmpty() ? createSequenceDictionaryFromFeatureIndex() : dict;
-    }
-
-    /**
-     * get the sequence dictionary contig list that is always in the index
-     * @return a SAMSequenceDictionary or null if the index cannot be loaded or there are no contigs in the index
-     */
-    private SAMSequenceDictionary createSequenceDictionaryFromFeatureIndex() {
-        final Index index = hasIndex ? IndexUtils.loadTribbleIndex(featureFile) : null;
-        if (index == null){
-            return null;
+        if (dict != null && !dict.isEmpty()) {
+            return dict;
         }
-        final List<String> seqNames = index.getSequenceNames();
-        if (seqNames == null) {
-            return null;
+        if (hasIndex) {
+            return SequenceDictionaryUtils.createSequenceDictionaryFromFeatureIndex(featureFile);
         }
-        final SAMSequenceDictionary dict = new SAMSequenceDictionary();
-        //use UNKNOWN_SEQUENCE_LENGTH to indicate contigs that will not be compared by length (see SequenceDictionaryUtils.sequenceRecordsAreEquivalent)
-        seqNames.forEach(seqName -> dict.addSequence(new SAMSequenceRecord(seqName, SAMSequenceRecord.UNKNOWN_SEQUENCE_LENGTH)));
-        return dict;
+        return null;
     }
 
     /**

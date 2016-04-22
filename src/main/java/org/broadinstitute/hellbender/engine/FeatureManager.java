@@ -231,7 +231,8 @@ public final class FeatureManager implements AutoCloseable {
     }
 
     /**
-     * Returns the sequence dictionaries associated with the given set of feature sources.
+     * Returns the sequence dictionaries associated with all feature sources.
+     * This method will return an empty List if none of the feature sources have dictionaries.
      */
     public List<SAMSequenceDictionary> getAllSequenceDictionaries() {
         return featureSources.values().stream().map(fs -> fs.getSequenceDictionary())

@@ -3,9 +3,11 @@ package org.broadinstitute.hellbender.utils;
 import com.google.common.annotations.VisibleForTesting;
 import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.SAMSequenceRecord;
+import htsjdk.tribble.index.Index;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
 
+import java.io.File;
 import java.util.*;
 
 /**
@@ -21,6 +23,11 @@ import java.util.*;
 public final class SequenceDictionaryUtils {
 
     private SequenceDictionaryUtils(){}
+
+    /**
+     * Compares sequence records by their order
+     */
+    private static final Comparator<SAMSequenceRecord> SEQUENCE_INDEX_ORDER = Comparator.comparing(SAMSequenceRecord::getSequenceIndex);
 
     // The following sets of contig records are used to perform the non-canonical human ordering check.
     // This check ensures that the order is 1,2,3... instead of 1, 10, 11, 12...2, 20, 21...
@@ -311,7 +318,9 @@ public final class SequenceDictionaryUtils {
 
     /**
      * Helper routine that returns whether two sequence records are equivalent, defined as having the same name and
-     * lengths
+     * lengths.
+     *
+     * NOTE: we allow the lengths to differ if one or both are UNKNOWN_SEQUENCE_LENGTH
      *
      * @param first first sequence record to compare
      * @param second second sequence record to compare
@@ -331,7 +340,6 @@ public final class SequenceDictionaryUtils {
         final int length1 = first.getSequenceLength();
         final int length2 = second.getSequenceLength();
 
-        //we allow the lengths to differ if one or both are UNKNOWN_SEQUENCE_LENGTH
         if (length1 != length2 && length1 != SAMSequenceRecord.UNKNOWN_SEQUENCE_LENGTH && length2 != SAMSequenceRecord.UNKNOWN_SEQUENCE_LENGTH){
             return false;
         }
@@ -419,12 +427,6 @@ public final class SequenceDictionaryUtils {
     }
 
     /**
-     * Compares sequence records by their order
-     */
-    private static final Comparator<SAMSequenceRecord> SEQUENCE_INDEX_ORDER =
-            (x, y) -> Integer.compare(x.getSequenceIndex(), y.getSequenceIndex());
-
-    /**
      * Checks whether the common contigs in the given sequence dictionaries occur at the same indices
      * in both dictionaries
      *
@@ -491,5 +493,25 @@ public final class SequenceDictionaryUtils {
         s.append("]");
 
         return s.toString();
+    }
+
+    /**
+     * get the sequence dictionary contig list that is in the index or null if there is not index or not contigs
+     * Note: the dictionary returned will not have the contig lengths filled in {@link SAMSequenceRecord#UNKNOWN_SEQUENCE_LENGTH} is used.
+     * @return a SAMSequenceDictionary or null if the index cannot be loaded or there are no contigs in the index
+     */
+    public static SAMSequenceDictionary createSequenceDictionaryFromFeatureIndex(final File featureFile) {
+        final Index index = IndexUtils.loadTribbleIndex(featureFile);
+        if (index == null){
+            return null;
+        }
+        final List<String> seqNames = index.getSequenceNames();
+        if (seqNames == null) {
+            return null;
+        }
+        final SAMSequenceDictionary dict = new SAMSequenceDictionary();
+        //use UNKNOWN_SEQUENCE_LENGTH to indicate contigs that will not be compared by length (see SequenceDictionaryUtils.sequenceRecordsAreEquivalent)
+        seqNames.forEach(seqName -> dict.addSequence(new SAMSequenceRecord(seqName, SAMSequenceRecord.UNKNOWN_SEQUENCE_LENGTH)));
+        return dict;
     }
 }

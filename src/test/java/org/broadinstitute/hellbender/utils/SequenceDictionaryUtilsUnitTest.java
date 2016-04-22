@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.utils;
 
+import com.google.cloud.dataflow.sdk.repackaged.com.google.common.collect.Sets;
 import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.SAMSequenceRecord;
 import org.apache.log4j.Logger;
@@ -9,9 +10,12 @@ import org.testng.Assert;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.broadinstitute.hellbender.utils.SequenceDictionaryUtils.*;
 import static org.broadinstitute.hellbender.utils.SequenceDictionaryUtils.SequenceDictionaryCompatibility.*;
@@ -20,8 +24,15 @@ public final class SequenceDictionaryUtilsUnitTest extends BaseTest {
 
     private static Logger logger = Logger.getLogger(SequenceDictionaryUtilsUnitTest.class);
 
-    @DataProvider( name = "SAMSequenceRecords" )
-    public Object[][] SAMSequenceRecords() {
+    @Test
+    public void testCreateSequenceDictionaryFromFeatureIndex() throws Exception {
+        final SAMSequenceDictionary dict = createSequenceDictionaryFromFeatureIndex(new File(getToolTestDataDir(), "test_variants_for_index.vcf"));
+        final Set<String> contigs = dict.getSequences().stream().map(s -> s.getSequenceName()).collect(Collectors.toSet());
+        Assert.assertEquals(contigs, Sets.newHashSet("1", "2", "3", "4"));
+    }
+
+    @DataProvider( name = "testSequenceRecordsAreEquivalentDataProvider" )
+    public Object[][] testSequenceRecordsAreEquivalentDataProvider() {
         final SAMSequenceRecord CHRM_HG19 = new SAMSequenceRecord("chrM", 16571);
         final SAMSequenceRecord CHR_NONSTANDARD1 = new SAMSequenceRecord("NonStandard1", 8675309);
         final SAMSequenceRecord CHR1_HG19_WITH_UNKNOWN_LENGTH = new SAMSequenceRecord(CHR1_HG19.getSequenceName(), SAMSequenceRecord.UNKNOWN_SEQUENCE_LENGTH);
@@ -40,7 +51,7 @@ public final class SequenceDictionaryUtilsUnitTest extends BaseTest {
         };
     }
 
-    @Test(dataProvider = "SAMSequenceRecords")
+    @Test(dataProvider = "testSequenceRecordsAreEquivalentDataProvider")
     public void testSequenceRecordsAreEquivalent(final SAMSequenceRecord one, final SAMSequenceRecord two, final boolean expected){
         final boolean actual = SequenceDictionaryUtils.sequenceRecordsAreEquivalent(one, two);
         Assert.assertEquals(actual, expected);
@@ -73,10 +84,9 @@ public final class SequenceDictionaryUtilsUnitTest extends BaseTest {
                 new SimpleInterval("chrM", 1, 1),
                 new SimpleInterval("chr1", 1, 1));
 
-        final List<SAMSequenceRecord> chr1_gh19 = Arrays.asList(CHR1_HG19);
         return new Object[][]  {
                 // Identical dictionaries:
-                { chr1_gh19,                                       chr1_gh19,                                       IDENTICAL, null, false, false},
+                {Arrays.asList(CHR1_HG19),                         Arrays.asList(CHR1_HG19),                        IDENTICAL, null, false, false},
                 { Arrays.asList(CHR1_HG19),                        Arrays.asList(CHR1_HG19),                        IDENTICAL, null, false, false},
                 { Arrays.asList(CHR1_HG19),                        Arrays.asList(CHR1_HG19),                        IDENTICAL, null, true,  false},
                 { Arrays.asList(CHR1_HG19),                        Arrays.asList(CHR1_HG19),                        IDENTICAL, null, false, true},
@@ -119,7 +129,7 @@ public final class SequenceDictionaryUtilsUnitTest extends BaseTest {
 
                 // Dictionaries with unequal common contigs:
                 { Arrays.asList(CHR1_HG19),                                          Arrays.asList(CHR1_HG19_WITH_DIFFERENT_LENGTH),                    UNEQUAL_COMMON_CONTIGS, UNEQUAL_COMMON_CONTIGS_EXCEPTION, false, false},
-                { Arrays.asList(CHR1_HG19_WITH_DIFFERENT_LENGTH),                    Arrays.asList(CHR1_HG19),                    UNEQUAL_COMMON_CONTIGS, UNEQUAL_COMMON_CONTIGS_EXCEPTION, false, false},
+                { Arrays.asList(CHR1_HG19_WITH_DIFFERENT_LENGTH),                    Arrays.asList(CHR1_HG19),                                          UNEQUAL_COMMON_CONTIGS, UNEQUAL_COMMON_CONTIGS_EXCEPTION, false, false},
                 { Arrays.asList(CHR1_HG19),                                          Arrays.asList(CHR1_HG18),                                          UNEQUAL_COMMON_CONTIGS, UNEQUAL_COMMON_CONTIGS_EXCEPTION, false, false},
                 { Arrays.asList(CHR1_HG19),                                          Arrays.asList(CHR1_HG18),                                          UNEQUAL_COMMON_CONTIGS, UNEQUAL_COMMON_CONTIGS_EXCEPTION, true,  false},
                 { Arrays.asList(CHR1_HG19),                                          Arrays.asList(CHR1_HG18),                                          UNEQUAL_COMMON_CONTIGS, UNEQUAL_COMMON_CONTIGS_EXCEPTION, false, true},
@@ -315,13 +325,14 @@ public final class SequenceDictionaryUtilsUnitTest extends BaseTest {
     @DataProvider(name = "SupersetData")
     public Object[][] getSupersetData() {
         return new Object[][] {
+                { Arrays.asList(CHR2_HG19, CHR1_HG19, CHR10_HG19), Arrays.asList(CHR2_HG19, CHR1_HG19, CHR10_HG19)}, //exactly same
                 { Arrays.asList(CHR2_HG19, CHR1_HG19, CHR10_HG19), Arrays.asList(CHR1_HG19, CHR2_HG19) },
                 { Arrays.asList(CHR10_HG19, CHR2_HG19, CHR1_HG19), Arrays.asList(CHR1_HG19) }
         };
     }
 
     @Test(dataProvider = "SupersetData")
-    public void testCRAMValidationDoesAcceptsSuperset( final List<SAMSequenceRecord> refDictionaryContigs, final List<SAMSequenceRecord> cramDictionaryContigs ) {
+    public void testCRAMValidationDoesAcceptSuperset( final List<SAMSequenceRecord> refDictionaryContigs, final List<SAMSequenceRecord> cramDictionaryContigs ) {
         final SAMSequenceDictionary refDictionary = createSequenceDictionary(refDictionaryContigs);
         final SAMSequenceDictionary cramDictionary = createSequenceDictionary(cramDictionaryContigs);
 
