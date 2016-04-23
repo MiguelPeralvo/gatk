@@ -356,7 +356,9 @@ signing {
 
 
 def boolean hasRequiredAuthenticationForUpload(){
-    if project.p
+    if( isRelease ){
+        if
+    }
 }
 /**
  * Upload a release to sonatype.  You must be an authorized uploader and have your sonatype
