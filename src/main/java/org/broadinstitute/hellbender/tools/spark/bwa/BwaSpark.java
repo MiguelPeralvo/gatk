@@ -18,10 +18,12 @@ import org.broadinstitute.hellbender.cmdline.CommandLineProgramProperties;
 import org.broadinstitute.hellbender.cmdline.StandardArgumentDefinitions;
 import org.broadinstitute.hellbender.cmdline.programgroups.SparkProgramGroup;
 import org.broadinstitute.hellbender.engine.spark.GATKSparkTool;
+import org.broadinstitute.hellbender.engine.spark.datasources.ReadsSparkSink;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.utils.gcs.BucketUtils;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
+import org.broadinstitute.hellbender.utils.read.ReadsWriteFormat;
 import org.broadinstitute.hellbender.utils.read.SAMRecordToGATKReadAdapter;
 import org.seqdoop.hadoop_bam.BAMInputFormat;
 import scala.Tuple2;
@@ -109,6 +111,7 @@ public final class BwaSpark extends GATKSparkTool {
         // TODO: is there a better way to build a header? E.g. from the BAM
         final SAMSequenceDictionary sequences = makeSequenceDictionary(new File(ref));
         final SAMFileHeader readsHeader = new SAMFileHeader();
+        readsHeader.setSortOrder(SAMFileHeader.SortOrder.unsorted);
         readsHeader.setSequenceDictionary(sequences);
 
         final SAMLineParser samLineParser = new SAMLineParser(new DefaultSAMRecordFactory(), ValidationStringency.SILENT, readsHeader, null, null);
@@ -116,12 +119,18 @@ public final class BwaSpark extends GATKSparkTool {
 
         JavaRDD<GATKRead> reads = samLines.map(r -> new SAMRecordToGATKReadAdapter(samLineParserBroadcast.getValue().parseLine(r)));
 
-        SAMFileWriterFactory samFileWriterFactory = new SAMFileWriterFactory();
-        try (SAMFileWriter samFileWriter = samFileWriterFactory.makeSAMWriter(readsHeader, true, new File(output))) {
-            for (GATKRead r : reads.collect()) {
-                samFileWriter.addAlignment(r.convertToSAMRecord(readsHeader));
-            }
+        try {
+            ReadsSparkSink.writeReads(ctx, output, null, reads, readsHeader, ReadsWriteFormat.SHARDED);
+        } catch (IOException e) {
+            throw new GATKException("unable to write bam: " + e);
         }
+
+//        SAMFileWriterFactory samFileWriterFactory = new SAMFileWriterFactory();
+//        try (SAMFileWriter samFileWriter = samFileWriterFactory.makeSAMWriter(readsHeader, true, new File(output))) {
+//            for (GATKRead r : reads.collect()) {
+//                samFileWriter.addAlignment(r.convertToSAMRecord(readsHeader));
+//            }
+//        }
     }
 
     private <U> Iterator<List<U>> pairwise(Iterator<U> iter) {

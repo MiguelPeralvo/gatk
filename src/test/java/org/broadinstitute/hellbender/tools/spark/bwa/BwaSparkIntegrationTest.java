@@ -21,6 +21,8 @@ public final class BwaSparkIntegrationTest extends CommandLineProgramTest {
         final File ref = getTestFile("ref.fa");
         final File input = getTestFile("R.bam");
         final File output = createTempFile("bwa", ".bam");
+        output.delete();
+
         ArgumentsBuilder args = new ArgumentsBuilder();
         args.addFileArgument("ref", ref);
         args.addFileArgument("input", input);
@@ -28,7 +30,7 @@ public final class BwaSparkIntegrationTest extends CommandLineProgramTest {
         args.addOutput(output);
         this.runCommandLine(args.getArgsArray());
 
-        SamAssertionUtils.assertSamsEqual(output, expectedSam);
+        SamAssertionUtils.assertSamsEqual(new File(output, "part-r-00000"), expectedSam);
     }
 
 }
