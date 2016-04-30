@@ -27,7 +27,7 @@ public final class PileupElement {
     public static final byte G_FOLLOWED_BY_INSERTION_BASE = (byte) 90;
 
     private final GATKRead read;         // the read this base belongs to
-    protected final int offset;            // the offset in the bases array for this base
+    private final int offset;            // the offset in the bases array for this base
 
     private final CigarElement currentCigarElement;
     private final int currentCigarOffset;
@@ -128,7 +128,7 @@ public final class PileupElement {
     }
 
     /**
-     * Get the read for this pileup element
+     * Get the read for this pileup element. Returns the live object stored in this pileup element.
      * @return a non-null Read
      */
     public GATKRead getRead() {
@@ -137,7 +137,6 @@ public final class PileupElement {
 
     /**
      * Get the offset of the this element into the read that aligns that read's base to this genomic position.
-     *
      * If the current element is a deletion then offset is the offset of the last base containing offset.
      *
      * @return a valid offset into the read's bases
@@ -208,7 +207,7 @@ public final class PileupElement {
 
     /**
      * Get the mapping quality of the read of this element
-     * @return the mapping quality of the underlying SAM record
+     * @return the mapping quality of the underlying read
      */
     public int getMappingQual() {
         return read.getMappingQuality();
@@ -216,7 +215,7 @@ public final class PileupElement {
 
     @Override
     public String toString() {
-        return String.format("%s @ %d = %c Q%d", getRead().getName(), getOffset(), (char) getBase(), getQual());
+        return String.format("%s @ %d = %c Q%d", read.getName(), offset, (char) getBase(), getQual());
     }
 
     /**
@@ -328,7 +327,8 @@ public final class PileupElement {
      */
     private LinkedList<CigarElement> getBetween(final Direction direction) {
         final int increment = direction == Direction.NEXT ? 1 : -1;
-        LinkedList<CigarElement> elements = null;
+
+        final LinkedList<CigarElement> elements = new LinkedList<>();
         final List<CigarElement> cigarElements = read.getCigarElements();
         final int nCigarElements = cigarElements.size();
         for ( int i = currentCigarOffset + increment; i >= 0 && i < nCigarElements; i += increment) {
@@ -336,11 +336,6 @@ public final class PileupElement {
             if ( ON_GENOME_OPERATORS.contains(elt.getOperator()) ) {
                 break;
             } else {
-                // optimization: don't allocate list if not necessary
-                if ( elements == null ) {
-                    elements = new LinkedList<>();
-                }
-
                 if ( increment > 0 ) {
                     // to keep the list in the right order, if we are incrementing positively add to the end
                     elements.add(elt);
@@ -351,10 +346,26 @@ public final class PileupElement {
             }
         }
 
-        // optimization: elements is null because nothing got added, just return the empty list
         return elements == null ? new LinkedList<>() : elements;
     }
 
+    /**
+     * Helper function to get cigar elements between this and either the prev or next genomic position
+     *
+     * @param direction PREVIOUS if we want before, NEXT if we want after
+     * @return the neighboring position in given direction or null if there is none.
+     */
+    private final CigarElement getNeighborElement(final Direction direction) {
+        final int increment = direction == Direction.NEXT ? 1 : -1;
+
+        final List<CigarElement> cigarElements = read.getCigarElements();
+        final int i = currentCigarOffset + increment;
+        if (i >= 0 && i < cigarElements.size()){
+            return cigarElements.get(i);
+        } else {
+            return null;
+        }
+    }
     /**
      * Get the cigar element of the previous genomic aligned position
      *
@@ -415,30 +426,58 @@ public final class PileupElement {
     /**
      * Does an insertion occur immediately before the current position on the genome?
      *
-     * @return true if yes, false if no
+     * @return true if an insertion occur immediately before the current position on the genome, false otherwise
      */
-    public boolean isAfterInsertion() { return isAfter(getBetweenPrevPosition(), CigarOperator.I); }
+    public boolean isAfterInsertion() { return isImmediatelyAfter(CigarOperator.I); }
 
     /**
      * Does an insertion occur immediately after the current position on the genome?
      *
-     * @return true if yes, false if no
+     * @return true an insertion occur immediately after the current position on the genome, false otherwise
      */
-    public boolean isBeforeInsertion() { return isBefore(getBetweenNextPosition(), CigarOperator.I); }
+    public boolean isBeforeInsertion() {
+        return isImmediatelyBefore(CigarOperator.I);
+    }
 
     /**
      * Does a soft-clipping event occur immediately before the current position on the genome?
      *
-     * @return true if yes, false if no
+     * @return true if a soft-clipping event occur immediately before the current position on the genome, false otherwise
      */
-    public boolean isAfterSoftClip() { return isAfter(getBetweenPrevPosition(), CigarOperator.S); }
+    public boolean isAfterSoftClip() {
+        return isImmediatelyAfter(CigarOperator.S);
+    }
 
     /**
      * Does a soft-clipping event occur immediately after the current position on the genome?
      *
-     * @return true if yes, false if no
+     * @return true if a soft-clipping event occur immediately after the current position on the genome, false otherwise.
      */
-    public boolean isBeforeSoftClip() { return isBefore(getBetweenNextPosition(), CigarOperator.S); }
+    public boolean isBeforeSoftClip() {
+        return isImmediatelyBefore(CigarOperator.S);
+    }
+
+    /**
+     * @return true if a given operator event occurs immediately before the current position on the genome, false otherwise.
+     */
+    private boolean isImmediatelyAfter(final CigarOperator op) {
+        if (!atStartOfCurrentCigar()) {
+            return false;
+        }
+        final CigarElement el = getNeighborElement(Direction.PREV);
+        return el != null && el.getOperator() == op;
+    }
+
+    /**
+    * @return true if a given operator event occurs immediately after the current position on the genome, false otherwise.
+     */
+    private boolean isImmediatelyBefore(final CigarOperator op) {
+        if (!atEndOfCurrentCigar()) {
+            return false;
+        }
+        final CigarElement el = getNeighborElement(Direction.NEXT);
+        return el != null && el.getOperator() == op;
+    }
 
     /**
      * Does a soft-clipping event occur immediately before or after the current position on the genome?
@@ -478,18 +517,7 @@ public final class PileupElement {
      * @param op the op we want the last element's op to equal
      * @return true if op == last(elements).op
      */
-    private boolean isAfter(final Deque<CigarElement> elements, final CigarOperator op) {
+    private boolean isImmediatelyAfter(final Deque<CigarElement> elements, final CigarOperator op) {
         return ! elements.isEmpty() && elements.peekLast().getOperator() == op;
-    }
-
-    /**
-     * Is op the first element in the list of elements?
-     *
-     * @param elements the elements to examine
-     * @param op the op we want the last element's op to equal
-     * @return true if op == first(elements).op
-     */
-    private boolean isBefore(final List<CigarElement> elements, final CigarOperator op) {
-        return ! elements.isEmpty() && elements.get(0).getOperator() == op;
     }
 }
