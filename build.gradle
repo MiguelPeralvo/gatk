@@ -398,8 +398,6 @@ task installAll{  dependsOn installSpark, installDist }
 
 test.dependsOn extractIntelDeflater
 installDist.dependsOn downloadGsaLibFile, extractIntelDeflater
-build.dependsOn installDist
-check.dependsOn installDist
 
 model {
     components {

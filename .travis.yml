@@ -29,6 +29,10 @@ env:
   - secure: RA4LKD82cW+0xPayPVAWSpYqJu5uoPcz7oXXYtYNVuilFmS8PGYx0g/BXs4QMvQsGMt6aMLN8m7lMAPN5XTH/8JSeM3VmQ3mdpgNdP+p3CVlwrapZ2lTq27Wb/E8J1CGEHOg76z716t//FUElyC/gdhS+tfBmXk3YanM5fMXEHs=
   #google API key
   - secure: "eHyDxfcfv6pSIkoqQ9PimiYu9I6vmXJOpY/OkXLkc7ZAUfNTfRVytUGG9Xf/bKKF+Wscm5pIfZJ/TMDG6E3Uyngs9nVK/29QWevcEaLDJy8OdI9OgPZb13hlbM2jbVv5AVBGYcbcNBrTvrTs0MOMOFPEJqZ99xWIj5bzZ/AsIfU="
+  #for uploading artifacts
+  - ARTIFACTORY_USERNAME=hellbender
+  #artifactory password
+  - secure: "IljQMLW1ha8c3Mdf7FnDdRe0ZFrEZdDnMsqA3zsc8+Th4psoWckg8Mwr/2xQHYsGLITaKk32M/V9YBQJ/d5IyEof/biw12Zhy3RR3y7U1d0lN4bqeXy8QugFSm6ohBVpit36ppPcRfzR/Jz2s7HKg07sUqThinDpPc3QrsutLJY="
 matrix:
   fast_finish: true
   allow_failures:
@@ -86,6 +90,9 @@ after_success:
     echo "Can't run cloud tests without keys so don't try to record coverage tests";
   else
    ./gradlew coveralls;
+  fi
+  if [ "$TRAVIS_BRANCH" == "lb_artifactory_releases"  && CLOUD == false ]; 
+    ./gradlew uploadArchives;
   fi
 - python <(curl -s https://raw.githubusercontent.com/TouK/sputnik-ci/master/sputnik-ci.py)
 after_failure:
