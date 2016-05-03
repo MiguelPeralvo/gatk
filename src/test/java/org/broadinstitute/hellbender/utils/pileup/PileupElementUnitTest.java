@@ -90,7 +90,7 @@ public final class PileupElementUnitTest extends LocusIteratorByStateBaseTest {
                 final CigarElement prevElement = read.getCigar().getCigarElement(state.getCurrentCigarElementOffset() - 1);
                 if ( prevElement.getOperator() == CigarOperator.I ) {
                     Assert.assertTrue(pe.getBetweenPrevPosition().size() >= 1);
-                    Assert.assertEquals(pe.getBetweenPrevPosition().getLast(), prevElement);
+                    Assert.assertEquals(pe.getBetweenPrevPosition().get(pe.getBetweenPrevPosition().size()-1), prevElement);
                 }
                 if ( prevElement.getOperator() == CigarOperator.M ) {
                     Assert.assertTrue(pe.getBetweenPrevPosition().isEmpty());
@@ -147,6 +147,8 @@ public final class PileupElementUnitTest extends LocusIteratorByStateBaseTest {
         Assert.assertEquals(pe.getBetweenPrevPosition().size(), 0);
         assertEqualsOperators(pe.getBetweenNextPosition(), ops);
         Assert.assertEquals(pe.getPreviousOnGenomeCigarElement(), null);
+        Assert.assertEquals(pe.getNeighborNotOnGenomeOperator(PileupElement.Direction.PREV), null);
+        Assert.assertEquals(pe.getNeighborNotOnGenomeOperator(PileupElement.Direction.NEXT), ops.get(0));
         Assert.assertNotNull(pe.getNextOnGenomeCigarElement());
         Assert.assertEquals(pe.getNextOnGenomeCigarElement().getOperator(), lastOp);
 
@@ -155,6 +157,8 @@ public final class PileupElementUnitTest extends LocusIteratorByStateBaseTest {
         Assert.assertEquals(pe2.getBetweenPrevPosition().size(), ops.size());
         Assert.assertEquals(pe2.getBetweenNextPosition().size(), 0);
         assertEqualsOperators(pe2.getBetweenPrevPosition(), ops);
+        Assert.assertEquals(pe2.getNeighborNotOnGenomeOperator(PileupElement.Direction.PREV), ops.get(ops.size()-1));
+        Assert.assertEquals(pe2.getNeighborNotOnGenomeOperator(PileupElement.Direction.NEXT), null);
         Assert.assertNotNull(pe2.getPreviousOnGenomeCigarElement());
         Assert.assertEquals(pe2.getPreviousOnGenomeCigarElement().getOperator(), firstOp);
         Assert.assertEquals(pe2.getNextOnGenomeCigarElement(), null);
@@ -170,7 +174,7 @@ public final class PileupElementUnitTest extends LocusIteratorByStateBaseTest {
     public void testCreatePileupForReadAndOffset1(){
         final GATKRead read = ArtificialReadUtils.createArtificialRead("100M");
         final PileupElement pe0 = PileupElement.createPileupForReadAndOffset(read, 0);
-        final LinkedList<CigarElement> betweenNextPosition = pe0.getBetweenNextPosition();
+        final List<CigarElement> betweenNextPosition = pe0.getBetweenNextPosition();
         Assert.assertTrue(betweenNextPosition.isEmpty());
         Assert.assertEquals(pe0.getOffset(), 0);
 

@@ -1,5 +1,6 @@
 package org.broadinstitute.hellbender.utils.pileup;
 
+import com.google.common.annotations.VisibleForTesting;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.util.Locatable;
 import org.broadinstitute.hellbender.utils.BaseUtils;
@@ -52,6 +53,16 @@ public final class ReadPileup implements Iterable<PileupElement>{
      */
     public ReadPileup(final Locatable loc, final List<GATKRead> reads, final List<Integer> offsets) {
         this(loc, readsOffsetsToPileup(reads, offsets));
+    }
+
+    /**
+     * Returns the element corresponding to the given read of null there is no such element.
+     * @param read or null if elements with no reads are to be retrieved from this pileup.
+     * @return
+     */
+    @VisibleForTesting
+    PileupElement getElementForRead(final GATKRead read){
+        return getElementStream().filter(el -> Objects.equals(el.getRead(), read)).findAny().orElse(null);
     }
 
     /**
