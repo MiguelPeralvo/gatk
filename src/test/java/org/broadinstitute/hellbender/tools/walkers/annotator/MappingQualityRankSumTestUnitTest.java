@@ -10,6 +10,7 @@ import org.broadinstitute.hellbender.utils.read.ArtificialReadUtils;
 import org.broadinstitute.hellbender.utils.read.GATKRead;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
 import org.testng.Assert;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import java.util.Arrays;
@@ -39,8 +40,16 @@ public final class MappingQualityRankSumTestUnitTest {
         read.setMappingQuality(mq);
         return read;
     }
-    @Test
-    public void testMQ(){
+
+    @DataProvider(name="data")
+    private Object[][] data(){
+        return new Object[][]{
+                {new MappingQualityRankSumTest(), GATKVCFConstants.MAP_QUAL_RANK_SUM_KEY, GATKVCFConstants.MAP_QUAL_RANK_SUM_KEY},
+                {new AS_MappingQualityRankSumTest(), GATKVCFConstants.AS_MAP_QUAL_RANK_SUM_KEY, GATKVCFConstants.AS_RAW_MAP_QUAL_RANK_SUM_KEY}
+        };
+    }
+    @Test(dataProvider = "data")
+    public void testMQ(final InfoFieldAnnotation ann, String key1, String key2){
         final PerReadAlleleLikelihoodMap map= new PerReadAlleleLikelihoodMap();
 
         final Allele alleleRef = Allele.create("T", true);
@@ -69,18 +78,61 @@ public final class MappingQualityRankSumTestUnitTest {
 
         final ReferenceContext ref= null;
         final VariantContext vc= makeVC(alleleRef, alleleAlt);
-        final InfoFieldAnnotation ann = new MappingQualityRankSumTest();
 
         final Map<String, Object> annotate = ann.annotate(ref, vc, stratifiedPerReadAlleleLikelihoodMap);
 
         final double val= MannWhitneyU.runOneSidedTest(false, Arrays.asList(hardAlts[0], hardAlts[1]),
                                                               Arrays.asList(hardRefs[0], hardRefs[1])).getLeft();
         final String valStr= String.format("%.3f", val);
-        Assert.assertEquals(annotate.get(GATKVCFConstants.MAP_QUAL_RANK_SUM_KEY), valStr);
+        Assert.assertEquals(annotate.get(key1), valStr);
 
         Assert.assertEquals(ann.getDescriptions().size(), 1);
-        Assert.assertEquals(ann.getDescriptions().get(0).getID(), GATKVCFConstants.MAP_QUAL_RANK_SUM_KEY);
+        Assert.assertEquals(ann.getDescriptions().get(0).getID(), key2);
         Assert.assertEquals(ann.getKeyNames().size(), 1);
-        Assert.assertEquals(ann.getKeyNames().get(0), GATKVCFConstants.MAP_QUAL_RANK_SUM_KEY);
+        Assert.assertEquals(ann.getKeyNames().get(0), key1);
+    }
+
+    @Test
+    public void testAS_MQRaw(){
+        final AS_RankSumTest ann = new AS_MappingQualityRankSumTest();
+        final String key1 = GATKVCFConstants.AS_RAW_MAP_QUAL_RANK_SUM_KEY;
+        final String key2 = GATKVCFConstants.AS_MAP_QUAL_RANK_SUM_KEY;
+        final PerReadAlleleLikelihoodMap map= new PerReadAlleleLikelihoodMap();
+
+        final Allele alleleRef = Allele.create("T", true);
+        final Allele alleleAlt = Allele.create("A", false);
+
+        final int[] hardAlts = {10, 20};
+        final int[] hardRefs = {100, 110};
+        final GATKRead read1 = makeRead(hardAlts[0]);
+        final GATKRead read2 = makeRead(hardAlts[1]);
+        final GATKRead read3 = makeRead(hardRefs[0]);
+        final GATKRead read4 = makeRead(hardRefs[1]);
+        map.add(read1, alleleAlt, -1.0);
+        map.add(read1, alleleRef, -100.0);
+
+        map.add(read2, alleleAlt, -1.0);
+        map.add(read2, alleleRef, -100.0);
+
+        map.add(read3, alleleAlt, -100.0);
+        map.add(read3, alleleRef, -1.0);
+
+        map.add(read4, alleleAlt, -100.0);
+        map.add(read4, alleleRef, -1.0);
+
+        final Map<String, PerReadAlleleLikelihoodMap> stratifiedPerReadAlleleLikelihoodMap = Collections.singletonMap(sample1, map);
+
+
+        final ReferenceContext ref= null;
+        final VariantContext vc= makeVC(alleleRef, alleleAlt);
+
+        final Map<String, Object> annotate = ann.annotateRawData(ref, vc, stratifiedPerReadAlleleLikelihoodMap);
+
+        Assert.assertEquals(annotate.get(key1), hardRefs[0] + ",1," + hardRefs[1] + ",1" + AS_RankSumTest.printDelim + hardAlts[0] + ",1," + hardAlts[1] + ",1");
+
+        Assert.assertEquals(ann.getDescriptions().size(), 1);
+        Assert.assertEquals(ann.getDescriptions().get(0).getID(), key1);
+        Assert.assertEquals(ann.getKeyNames().size(), 1);
+        Assert.assertEquals(ann.getKeyNames().get(0), key2);
     }
 }
