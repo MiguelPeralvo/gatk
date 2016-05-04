@@ -141,27 +141,102 @@ public final class PileupElementUnitTest extends LocusIteratorByStateBaseTest {
     public void testPrevAndNextTest(final GATKRead read, final CigarOperator firstOp, final CigarOperator lastOp, final List<CigarOperator> ops) {
         final AlignmentStateMachine state = new AlignmentStateMachine(read);
 
+        //before the first 'op' from the list
         state.stepForwardOnGenome();
         final PileupElement pe = state.makePileupElement();
         Assert.assertEquals(pe.getBetweenNextPosition().size(), ops.size());
         Assert.assertEquals(pe.getBetweenPrevPosition().size(), 0);
         assertEqualsOperators(pe.getBetweenNextPosition(), ops);
         Assert.assertEquals(pe.getPreviousOnGenomeCigarElement(), null);
-        Assert.assertEquals(pe.getNeighborNotOnGenomeOperator(PileupElement.Direction.PREV), null);
-        Assert.assertEquals(pe.getNeighborNotOnGenomeOperator(PileupElement.Direction.NEXT), ops.get(0));
         Assert.assertNotNull(pe.getNextOnGenomeCigarElement());
         Assert.assertEquals(pe.getNextOnGenomeCigarElement().getOperator(), lastOp);
 
+        //after the first 'op' from the list
         state.stepForwardOnGenome();
         final PileupElement pe2 = state.makePileupElement();
         Assert.assertEquals(pe2.getBetweenPrevPosition().size(), ops.size());
         Assert.assertEquals(pe2.getBetweenNextPosition().size(), 0);
         assertEqualsOperators(pe2.getBetweenPrevPosition(), ops);
-        Assert.assertEquals(pe2.getNeighborNotOnGenomeOperator(PileupElement.Direction.PREV), ops.get(ops.size()-1));
-        Assert.assertEquals(pe2.getNeighborNotOnGenomeOperator(PileupElement.Direction.NEXT), null);
         Assert.assertNotNull(pe2.getPreviousOnGenomeCigarElement());
         Assert.assertEquals(pe2.getPreviousOnGenomeCigarElement().getOperator(), firstOp);
         Assert.assertEquals(pe2.getNextOnGenomeCigarElement(), null);
+    }
+
+    @Test(dataProvider = "PrevAndNextTest")
+    public void testImmediateBeforeAndAfterTest(final GATKRead read, final CigarOperator firstOp, final CigarOperator lastOp, final List<CigarOperator> ops) {
+        final AlignmentStateMachine state = new AlignmentStateMachine(read);
+
+        //before the first 'op' from the list
+        state.stepForwardOnGenome();
+        final PileupElement pe1 = state.makePileupElement();
+        Assert.assertEquals(pe1.getAdjacentOperator(PileupElement.Direction.PREV), null);
+        Assert.assertEquals(pe1.getAdjacentOperator(PileupElement.Direction.NEXT), ops.get(0));
+        for (final CigarOperator op : CigarOperator.values()){
+            Assert.assertEquals(pe1.isImmediatelyBefore(op), ops.get(0) == op, op.toString());
+            Assert.assertFalse(pe1.isImmediatelyAfter(op), op.toString());
+        }
+
+        //after the first 'op' from the list
+        state.stepForwardOnGenome();
+        final PileupElement pe2 = state.makePileupElement();
+        Assert.assertEquals(pe2.getAdjacentOperator(PileupElement.Direction.PREV), ops.get(ops.size()-1));
+        Assert.assertEquals(pe2.getAdjacentOperator(PileupElement.Direction.NEXT), null);
+        for (final CigarOperator op : CigarOperator.values()){
+            Assert.assertFalse(pe2.isImmediatelyBefore(op), "immediately before " + op);
+            Assert.assertEquals(pe2.isImmediatelyAfter(op), op ==  ops.get(ops.size()-1), "immediately after " + op);
+        }
+    }
+
+    @DataProvider(name = "PrevAndNextTest_simple")
+    public Object[][] makePrevAndNextTest_simple() {
+        final List<Object[]> tests = new LinkedList<>();
+
+        for ( final CigarOperator firstOp : Arrays.asList(CigarOperator.M) ) {
+            for ( final CigarOperator lastOp : Arrays.asList(CigarOperator.M) ) {
+                for ( final CigarOperator middleOp : Arrays.asList(CigarOperator.I, CigarOperator.P, CigarOperator.S) ) {
+                    final int readLength = 3;
+                    final GATKRead read = ArtificialReadUtils.createArtificialRead(header, "read", 0, 1, readLength);
+                    read.setBases(Utils.dupBytes((byte) 'A', readLength));
+                    read.setBaseQualities(Utils.dupBytes((byte) 30, readLength));
+
+                    String cigar = "1" + firstOp;
+                    cigar += "1" + middleOp;
+                    cigar += "1" + lastOp;
+                    read.setCigar(cigar);
+
+                    tests.add(new Object[]{read, middleOp});
+                }
+            }
+        }
+
+        return tests.toArray(new Object[][]{});
+    }
+
+    @Test(dataProvider = "PrevAndNextTest_simple")
+    public void testImmediateBeforeAndAfterTest_simple(final GATKRead read, final CigarOperator middleOp) {
+        final AlignmentStateMachine state = new AlignmentStateMachine(read);
+
+        state.stepForwardOnGenome();
+
+        //before the 'middleOp'
+        final PileupElement pe1 = state.makePileupElement();
+        Assert.assertEquals(pe1.getAdjacentOperator(PileupElement.Direction.PREV), null, "PREV");
+        Assert.assertEquals(pe1.getAdjacentOperator(PileupElement.Direction.NEXT), middleOp, "NEXT");
+        for (final CigarOperator op : CigarOperator.values()) {
+            Assert.assertEquals(pe1.isImmediatelyBefore(op), middleOp == op, op.toString());
+            Assert.assertFalse(pe1.isImmediatelyAfter(op), op.toString());
+        }
+
+        state.stepForwardOnGenome();
+
+        //after the 'middleOp'
+        final PileupElement pe2 = state.makePileupElement();
+        Assert.assertEquals(pe2.getAdjacentOperator(PileupElement.Direction.PREV), middleOp, "PREV");
+        Assert.assertEquals(pe2.getAdjacentOperator(PileupElement.Direction.NEXT), null, "NEXT");
+        for (final CigarOperator op : CigarOperator.values()) {
+            Assert.assertFalse(pe2.isImmediatelyBefore(op), op.toString());
+            Assert.assertEquals(pe2.isImmediatelyAfter(op), op == middleOp, op.toString());
+        }
     }
 
     private void assertEqualsOperators(final List<CigarElement> elements, final List<CigarOperator> ops) {

@@ -56,9 +56,9 @@ public final class ReadPileup implements Iterable<PileupElement>{
     }
 
     /**
-     * Returns the element corresponding to the given read of null there is no such element.
+     * Returns the first element corresponding to the given read or null there is no such element.
      * @param read or null if elements with no reads are to be retrieved from this pileup.
-     * @return
+     * @return the first element corresponding to the given read or null there is no such element.
      */
     @VisibleForTesting
     PileupElement getElementForRead(final GATKRead read){

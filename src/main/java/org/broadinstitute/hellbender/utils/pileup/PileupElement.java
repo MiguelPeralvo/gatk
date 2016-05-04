@@ -332,7 +332,8 @@ public final class PileupElement {
     }
 
     /**
-     * Helper function to get cigar elements between this and either the prev or next genomic position
+     * Helper function to get cigar elements between this and either the prev or next genomic position.
+     * Note that this method stops accumulating elements at the first "on-genome" operator it encounters.
      *
      * @param direction PREVIOUS if we want before, NEXT if we want after
      * @return a non-null list of cigar elements between this and the neighboring position in direction
@@ -358,13 +359,13 @@ public final class PileupElement {
     }
 
     /**
-     * Helper function to get cigar operator right next to this position but only for not-on-genome operators.
+     * Helper function to get cigar operator right next to this position.
      *
      * @param direction PREVIOUS if we want before, NEXT if we want after
-     * @return the neighboring position in given direction or null if there is none
+     * @return the next Cigar operator in the given direction, or null if there is none
      */
     @VisibleForTesting
-    CigarOperator getNeighborNotOnGenomeOperator(final Direction direction) {
+    CigarOperator getAdjacentOperator(final Direction direction) {
         final int increment = direction.getIncrement();
 
         final List<CigarElement> cigarElements = read.getCigarElements();
@@ -372,12 +373,7 @@ public final class PileupElement {
         if (i < 0 || i >= cigarElements.size()) {
             return null;
         }
-        final CigarOperator op = cigarElements.get(i).getOperator();
-        if (ON_GENOME_OPERATORS.contains(op)) {
-            return null;
-        } else {
-            return op;
-        }
+        return cigarElements.get(i).getOperator();
     }
     /**
      * Get the cigar element of the previous genomic aligned position
@@ -476,7 +472,7 @@ public final class PileupElement {
     @VisibleForTesting
     boolean isImmediatelyAfter(final CigarOperator op) {
         Utils.nonNull(op);
-        return atStartOfCurrentCigar() && getNeighborNotOnGenomeOperator(Direction.PREV) == op;
+        return atStartOfCurrentCigar() && getAdjacentOperator(Direction.PREV) == op;
     }
 
     /**
@@ -485,7 +481,7 @@ public final class PileupElement {
     @VisibleForTesting
     boolean isImmediatelyBefore(final CigarOperator op) {
         Utils.nonNull(op);
-        return atEndOfCurrentCigar() && getNeighborNotOnGenomeOperator(Direction.NEXT) == op;
+        return atEndOfCurrentCigar() && getAdjacentOperator(Direction.NEXT) == op;
     }
 
     /**
