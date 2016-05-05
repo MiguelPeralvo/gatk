@@ -3,6 +3,7 @@ package org.broadinstitute.hellbender.tools.spark.bwa;
 import com.github.lindenb.jbwa.jni.BwaIndex;
 import com.github.lindenb.jbwa.jni.BwaMem;
 import com.github.lindenb.jbwa.jni.ShortRead;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterators;
 import htsjdk.samtools.*;
@@ -10,6 +11,8 @@ import htsjdk.samtools.reference.ReferenceSequence;
 import htsjdk.samtools.reference.ReferenceSequenceFile;
 import htsjdk.samtools.reference.ReferenceSequenceFileFactory;
 import htsjdk.samtools.util.StringUtil;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.broadcast.Broadcast;
@@ -32,8 +35,10 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 import static org.broadinstitute.hellbender.utils.Utils.calcMD5;
 
@@ -43,6 +48,8 @@ import static org.broadinstitute.hellbender.utils.Utils.calcMD5;
 public final class BwaSpark extends GATKSparkTool {
 
     private static final long serialVersionUID = 1L;
+
+    private static final Logger log = LogManager.getLogger(BwaSpark.class);
 
     @Argument(doc = "the reference", shortName = "ref",
             fullName = "ref", optional = false)
@@ -63,7 +70,7 @@ public final class BwaSpark extends GATKSparkTool {
 
     @Override
     protected void runTool(final JavaSparkContext ctx) {
-        ctx.hadoopConfiguration().setBoolean(BAMInputFormat.KEEP_PAIRED_READS_TOGETHER_PROPERTY, true); // TODO: need to make this work even for non-queryname sorted BAM
+        ctx.hadoopConfiguration().setBoolean(BAMInputFormat.KEEP_PAIRED_READS_TOGETHER_PROPERTY, true);
         JavaRDD<GATKRead> unalignedReads = getReads();
         JavaRDD<List<GATKRead>> unalignedPairs = unalignedReads.mapPartitions(iter -> () -> pairwise(iter));
         JavaRDD<Tuple2<ShortRead, ShortRead>> shortReadPairs = unalignedPairs.map(p -> {
@@ -85,9 +92,12 @@ public final class BwaSpark extends GATKSparkTool {
             try {
                 File localRef;
                 if (BucketUtils.isHadoopUrl(ref)) {
+                    Stopwatch stopwatch = Stopwatch.createStarted();
                     // copy to local file, since JNI currently requires it
                     localRef = File.createTempFile("ref", "fa");
                     Files.copy(Paths.get(URI.create(ref)), localRef.toPath());
+                    stopwatch.stop();
+                    log.info("Time to download reference: " + stopwatch.elapsed(TimeUnit.SECONDS) + "s");
                 } else {
                     localRef = new File(ref);
                 }
@@ -109,7 +119,9 @@ public final class BwaSpark extends GATKSparkTool {
         });
 
         // TODO: is there a better way to build a header? E.g. from the BAM
-        final SAMSequenceDictionary sequences = makeSequenceDictionary(new File(ref));
+
+        final SAMSequenceDictionary sequences = BucketUtils.isHadoopUrl(ref) ?
+                makeSequenceDictionary(Paths.get(URI.create(ref))) : makeSequenceDictionary(new File(ref));
         final SAMFileHeader readsHeader = new SAMFileHeader();
         readsHeader.setSortOrder(SAMFileHeader.SortOrder.unsorted);
         readsHeader.setSequenceDictionary(sequences);
@@ -178,6 +190,10 @@ public final class BwaSpark extends GATKSparkTool {
     public int NUM_SEQUENCES = Integer.MAX_VALUE;
 
     SAMSequenceDictionary makeSequenceDictionary(final File referenceFile) {
+        return makeSequenceDictionary(referenceFile.toPath());
+    }
+
+    SAMSequenceDictionary makeSequenceDictionary(final Path referenceFile) {
         final ReferenceSequenceFile refSeqFile =
                 ReferenceSequenceFileFactory.getReferenceSequenceFile(referenceFile, true);
         ReferenceSequence refSeq;
@@ -185,8 +201,7 @@ public final class BwaSpark extends GATKSparkTool {
         final Set<String> sequenceNames = new HashSet<>();
         for (int numSequences = 0; numSequences < NUM_SEQUENCES && (refSeq = refSeqFile.nextSequence()) != null; ++numSequences) {
             if (sequenceNames.contains(refSeq.getName())) {
-                throw new UserException.MalformedFile(referenceFile,
-                        "Sequence name appears more than once in reference: " + refSeq.getName());
+                throw new UserException.MalformedFile("Sequence name appears more than once in reference: " + refSeq.getName());
             }
             sequenceNames.add(refSeq.getName());
             ret.add(makeSequenceRecord(refSeq));
