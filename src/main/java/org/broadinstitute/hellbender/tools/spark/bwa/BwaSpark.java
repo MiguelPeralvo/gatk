@@ -34,9 +34,8 @@ import scala.Tuple2;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.*;
+import java.nio.file.spi.FileSystemProvider;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
@@ -120,8 +119,14 @@ public final class BwaSpark extends GATKSparkTool {
 
         // TODO: is there a better way to build a header? E.g. from the BAM
 
-        final SAMSequenceDictionary sequences = BucketUtils.isHadoopUrl(ref) ?
-                makeSequenceDictionary(Paths.get(URI.create(ref))) : makeSequenceDictionary(new File(ref));
+        final SAMSequenceDictionary sequences;
+        try {
+            sequences = BucketUtils.isHadoopUrl(ref) ?
+                    makeSequenceDictionary(getPath(URI.create(ref))) : makeSequenceDictionary(new File(ref));
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw new GATKException(e.toString());
+        }
         final SAMFileHeader readsHeader = new SAMFileHeader();
         readsHeader.setSortOrder(SAMFileHeader.SortOrder.unsorted);
         readsHeader.setSequenceDictionary(sequences);
@@ -143,6 +148,20 @@ public final class BwaSpark extends GATKSparkTool {
 //                samFileWriter.addAlignment(r.convertToSAMRecord(readsHeader));
 //            }
 //        }
+    }
+
+    private static Path getPath(URI uri) throws IOException {
+        try {
+            return Paths.get(uri);
+        } catch (FileSystemNotFoundException e) {
+            // Try to use thread context classloader to find the filesystem. This can happen when the filesystem
+            // provider is loaded using a URL classloader (e.g. in spark-submit).
+            ClassLoader cl = Thread.currentThread().getContextClassLoader();
+            if (cl == null) {
+                throw e;
+            }
+            return FileSystems.newFileSystem(uri, new HashMap<>(), cl).provider().getPath(uri);
+        }
     }
 
     private <U> Iterator<List<U>> pairwise(Iterator<U> iter) {
