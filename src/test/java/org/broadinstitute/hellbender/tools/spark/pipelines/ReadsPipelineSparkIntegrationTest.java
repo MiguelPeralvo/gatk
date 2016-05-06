@@ -71,6 +71,7 @@ public class ReadsPipelineSparkIntegrationTest extends CommandLineProgramTest {
 
                 // Output generated with GATK4
                 {new PipelineTest(GRCh37Ref_2021, hiSeqBam_chr20, dbSNPb37_20, " --joinStrategy SHUFFLE --knownSites " + more20Sites, getResourceDir() + expectedMultipleKnownSites)},
+                {new PipelineTest(GRCh37Ref2bit_chr2021, hiSeqBam_chr20, dbSNPb37_20, " --joinStrategy BROADCAST --knownSites " + more20Sites, getResourceDir() + expectedMultipleKnownSites)},
         };
     }
 
